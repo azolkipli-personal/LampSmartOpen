@@ -1,5 +1,11 @@
 # LampSmartOpen
 
+<p align="center">
+  <a href="https://github.com/sponsors/azolkipli-personal">
+    <img src="https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA" alt="Sponsor azolkipli-personal" />
+  </a>
+</p>
+
 > Control LampSmart Pro BLE lamps from Linux — no vendor app, no cloud, just `btmgmt`.
 >
 > **This fork** adds instant pre-computed control scripts, the QR code UUID extraction method, and a network relay mode for range extension.
