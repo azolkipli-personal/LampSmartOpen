@@ -1,527 +1,310 @@
 # LampSmartOpen
 
-> **This fork** adds fast pre-computed packet scripts, multi-lamp support, and a network relay mode for range extension via Raspberry Pi.
-
-LampSmartOpen is an open-source reimplementation of the **LampSmart Pro** control logic.
-It allows you to drive compatible BLE lamps directly from a Linux machine using standard tools like `btmgmt`, without the vendor's Android app or cloud.
-
-> ⚠️ This project is **experimental** and targeted at developers / hackers who are comfortable with BLE, Linux, and reverse-engineering. Use at your own risk.
+> Control LampSmart Pro BLE lamps from Linux — no vendor app, no cloud, just `btmgmt`.
+>
+> **This fork** adds instant pre-computed control scripts, the QR code UUID extraction method, and a network relay mode for range extension.
+>
+> ⚠️ Experimental. Use at your own risk.
 
 ---
 
-## What This Fork Adds
+## Step 0: What You Need
 
-The upstream project provides the core protocol implementation. This fork adds convenience scripts and workflows born from real-world use with 4 lamps across multiple rooms.
+* A **Linux machine** with a BLE adapter (built-in or USB dongle)
+* One or more **LampSmart Pro** compatible lamps
+* An **Android phone** with the LampSmart Pro app installed (just once, to get the UUID)
+* **sudo** access on the Linux machine
 
-### ⚡ Fast Pre-Computed Packets
+---
 
-`lampctrl.sh` computes the BLE advertising payload on every invocation — which works but takes ~5 seconds. That's too slow for binding (lamps only listen for ~5s after power-on).
+## Step 1: Install Dependencies
 
-- **`fast-bind.sh`** — Fires a pre-computed bind packet in ~0.15s. Power-cycle your lamp, run this, done.
-- **`fast-lamp.sh`** — Instant on/off/dim with pre-computed packets. `./fast-lamp.sh on`, `./fast-lamp.sh off`, `./fast-lamp.sh dim 128 64`
-- **`compute-packets.sh`** — Regenerates pre-computed packets if the lamp UUID changes.
-
-### 🌐 Network Relay (Range Extension)
-
-If your BLE adapter can't reach all lamps, run a Raspberry Pi (or any Linux box) closer to them:
-
-- **`relay.py`** — Tiny HTTP server that receives BLE advertising payloads and broadcasts them via `btmgmt`
-- **`send-relay.sh`** — NUC-side sender: `./send-relay.sh pi3b.local on`
-- **`pi-setup.sh`** — One-shot Raspberry Pi configuration (SSH in, run it, reboot — done)
-- **`ble-relay.service`** — Systemd unit for auto-start on boot
-
-```text
-NUC ──HTTP POST──▶ Pi 3B ──btmgmt BLE──▶ 💡 Lamps
+**Fedora:**
+```bash
+sudo dnf install bluez bluez-tools cmake gcc make jq git
 ```
 
-### 🔗 Upstream
+**Debian / Ubuntu / Raspberry Pi OS:**
+```bash
+sudo apt update
+sudo apt install bluez bluez-tools cmake gcc make jq git
+```
 
-This is a fork of **[AuroraRAS/LampSmartOpen](https://github.com/AuroraRAS/LampSmartOpen)** (GPL-3.0).
-All credit for the protocol reverse-engineering and core `lampctrl` binary goes to AuroraRAS.
-The `opencodeV3` submodule implements the V3 protocol family.
+**Verify your BLE adapter works:**
+```bash
+sudo btmgmt info
+```
+You should see something like:
+```
+hci0:   Primary  Bus: USB
+        BD Address: XX:XX:XX:XX:XX:XX
+        settings: powered ssp br/edr le ...
+```
 
 ---
 
-## Quick Start (Fork Edition)
+## Step 2: Clone and Build
 
 ```bash
-# 1. Build
 git clone --recurse-submodules https://github.com/azolkipli-personal/LampSmartOpen.git
 cd LampSmartOpen
-cmake -S . -B build && cmake --build build
-
-# 2. Set your lamp UUID (see below for how to get it)
-echo '{"lu":"your-uuid-here"}' > .env
-
-# 3. Generate pre-computed packets
-./compute-packets.sh
-
-# 4. Bind a lamp (power-cycle it first!)
-./fast-bind.sh
-
-# 5. Control
-./fast-lamp.sh on
-./fast-lamp.sh off
-./fast-lamp.sh dim 128 64
-```
-
-### 🔑 Getting Your Lamp UUID — The QR Code Trick
-
-You don't need to decompile anything. The official LampSmart Pro app lets you **share the UUID via QR code**:
-
-1. Open the LampSmart Pro Android app
-2. Navigate to lamp settings → **Share / QR Code** (the app has `buildQrCode` for this)
-3. The app displays a QR code encoding the lamp's UUID
-4. Scan it with **Google Lens** or any QR scanner
-5. The decoded text contains the UUID — copy it into `.env` as the `lu` value
-
-The app's decompiled code confirms this: `buildQrCode`, `deviceId`, and QR sharing translations in multiple languages (Indonesian, Malay, Spanish, Chinese).
-
-Alternatively, if you already have the app paired:
-- Look in the app's internal storage at `/data/data/com.alllink.*/shared_prefs/` for stored UUIDs
-- Or use the `lu` field from a known-good `.env` shared between installations
-
----
-
-## Features
-
-* **Local control only** – No cloud, no vendor app, just your own Linux box.
-* **Reimplementation of the LampSmart Pro protocol** (V3 family).
-* **Small C core** that generates the BLE advertising payload.
-* **Shell wrapper (`lampctrl.sh`)** that:
-
-  * Computes the lamp control address from a UUID stored in `.env`
-  * Uses `btmgmt` to send a single BLE advertising burst
-* Designed to be **readable, hackable, and reproducible**.
-
----
-
-## Repository Layout
-
-The repository is intentionally minimal:
-
-* `.env`
-  Local configuration (lamp identifiers etc.), read by the shell wrapper via `jq`.
-
-* `lampctrl.sh`
-  Convenience script wrapping `btmgmt` and the `lampctrl` binary.
-  It:
-
-  * Extracts the lamp’s UUID from `.env`
-  * Derives a control address from UUID fields
-  * Calls `lampctrl` to generate the advertising payload
-  * Enables LE advertising via `btmgmt`, sends one burst, and stops
-
-* `main.c`
-  Command-line tool (`lampctrl`) that generates the LampSmart BLE V3 payload for a given address and operation.
-
-* `CMakeLists.txt`
-  Build configuration for the `lampctrl` binary (and any linked encoder libraries / submodules).
-
-* `.gitmodules`
-  Submodules used by the encoder / helper code (protocol implementation lives there).
-
-* `LICENSE`
-  GPL-3.0 license.
-
----
-
-## How It Works (High-Level)
-
-The original LampSmart Pro Android app talks to the lamp by broadcasting specially-crafted **BLE advertising packets**, instead of maintaining a classic GATT connection.
-
-LampSmartOpen reconstructs that behaviour:
-
-1. You provide a lamp UUID in `.env`.
-2. `lampctrl.sh`:
-
-   * Parses the UUID, extracts the middle fields (e.g. `"27c7-500e"`),
-   * Treats them as a 32-bit value, adds 1, and formats it as `0xXXXXXXXX`,
-   * Passes that address to `lampctrl` with an operation code.
-3. `lampctrl`:
-
-   * Implements the LampSmart V3 command format and encoder.
-   * Outputs one or more advertising payloads for `btmgmt`.
-4. `btmgmt`:
-
-   * Enables LE, sets the advertising data, advertises briefly, then stops.
-
-This mirrors what the vendor app does, but with transparent, auditable code.
-
----
-
-## Requirements
-
-To build and run LampSmartOpen, you’ll need:
-
-* A **Linux** system with:
-
-  * A BLE-capable adapter supported by **BlueZ**
-  * `btmgmt` (usually provided by the `bluez` package)
-* Build toolchain:
-
-  * `cmake`
-  * `gcc` or another C compiler
-  * `make` or Ninja, depending on how you invoke CMake
-* Runtime tools:
-
-  * `jq` (to parse `.env`)
-
-You’ll also need:
-
-* A compatible **LampSmart Pro** lamp
-* Basic familiarity with BLE advertising on Linux
-
----
-
-## Building
-
-Clone the repository (with submodules) and build the C binary:
-
-```bash
-git clone --recurse-submodules https://github.com/AuroraRAS/LampSmartOpen.git
-cd LampSmartOpen
-
-# Configure build directory
 cmake -S . -B build
-
-# Build the lampctrl binary
 cmake --build build
 ```
 
-Depending on your IDE or generator, the resulting binary may be located in something like:
-
-* `build/lampctrl`, or
-* `build/Desktop-Debug/lampctrl` (IDE-generated build tree)
-
-Make sure `lampctrl.sh` points to the correct path for your build.
+This produces the `build/lampctrl` binary. Test it:
+```bash
+./build/lampctrl --help
+```
 
 ---
 
-## Configuration (`.env`)
+## Step 3: Get Your Lamp UUID
 
-The project uses a local `.env` file (JSON format) to store your lamp’s identifiers.
+The LampSmart Pro app stores a per-lamp UUID. You need this to generate commands. **You only need the app once** — after extracting the UUID, you never need it again.
+
+### Method A: QR Code (easiest)
+
+1. Open the **LampSmart Pro** app on your Android phone
+2. Make sure the lamp is paired in the app
+3. Navigate to **lamp settings → Share** (the app has a built-in `buildQrCode` feature)
+4. The app displays a **QR code** on screen
+5. Scan it with **Google Lens** or any QR code reader
+6. The decoded text contains your lamp's UUID — it looks like:
+   ```
+   XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+   ```
+7. Copy it. That's your `lu` value for the next step.
+
+> **Evidence**: The app's decompiled native code (`libapp.so`) contains `buildQrCode`, `deviceId`, and QR-sharing UI strings in Indonesian, Malay, Spanish, and Chinese — confirming this feature ships in the official app.
+
+### Method B: Already have a UUID?
+
+If a friend already set this up, or you extracted it previously, just re-use the UUID:
+```
+{"lu":"ac194b5e-0a95-50e5-a3f5-c9571988bff5"}
+```
+All your lamps bind to the same UUID — they're distinguished by the binding timing, not different UUIDs.
+
+---
+
+## Step 4: Configure `.env`
+
+Create your `.env` file with the UUID from Step 3:
+```bash
+echo '{"lu":"YOUR-UUID-HERE"}' > .env
+```
 
 Example:
-
-```json
-{
-  "lu": "89815eb1-27c7-500e-9d7f-d147a47ce477"
-}
+```bash
+echo '{"lu":"ac194b5e-0a95-50e5-a3f5-c9571988bff5"}' > .env
 ```
 
-In `lampctrl.sh`:
-
-* `lu` is read via `jq`
-* The script extracts the 2nd and 3rd UUID groups (`27c7-500e` in the example)
-* These hex chunks are concatenated (`27c7500e`), interpreted as a 32-bit integer, and incremented by 1
-* The result becomes the **control address** passed as `-a` to `lampctrl`, formatted like `0x27c7500f`
-
-You can adjust `.env` if you have multiple lamps or different identifiers. At the moment, the script assumes one primary lamp UUID.
+**Verify:**
+```bash
+cat .env
+```
+Should show your UUID.
 
 ---
 
-## Usage
+## Step 5: Generate Pre-Computed Packets
 
-### 1. Prepare Bluetooth
-
-You typically need `sudo` to talk to `btmgmt`:
+This fork uses pre-computed BLE advertising data for speed (0.15s vs ~5s). Generate them now:
 
 ```bash
-sudo btmgmt --index 0 power on
-sudo btmgmt --index 0 le on
+./compute-packets.sh
 ```
 
-The script will also perform those steps automatically for its short burst, but it’s useful to verify that your adapter is working first.
-
-### 2. Basic Control via `lampctrl.sh`
-
-After building `lampctrl` and configuring `.env`, you can run:
-
-```bash
-./lampctrl.sh
-```
-
-The default script behaviour:
-
-* Uses `IDX=0` (first Bluetooth controller)
-* Reads `.env` for `lu`
-* Computes the address
-* Calls something like:
-
-```bash
-./build/Desktop-Debug/lampctrl -a 0x27c7500f -o 1
-```
-
-* Sets an LE advertisement with the returned data via `btmgmt add-adv`
-* Advertises briefly (`-D 2` etc.), clears advertising, and powers LE off again
-
-You can edit `lampctrl.sh` to:
-
-* Change the adapter index (`IDX`)
-* Use different operation codes (`-o`) for other actions (e.g. off, dimming, etc.)
-* Change advertising duration
-
-### 3. Direct CLI Use (`lampctrl`)
-
-If you want to bypass the shell wrapper and call the encoder directly:
-
-```bash
-./build/lampctrl -a 0x27c7500f -o 1
-```
-
-The exact options and supported operations are defined in `main.c`.
-Typical parameters include at least:
-
-* `-a <address>` – 32-bit control address derived from the lamp UUID
-* `-o <opcode>` – numeric operation code (e.g. 1 might represent “turn on”)
-
-You can inspect / extend `main.c` to add more user-friendly commands (e.g. `--on`, `--off`, `--brightness`, etc.).
+This reads `.env`, derives the control address, and stores the packets inline in `fast-bind.sh` and `fast-lamp.sh`. If you change your UUID later, re-run this step.
 
 ---
 
-## Development Notes
+## Step 6: Bind Your Lamp
 
-* The project is GPL-3.0, so **modifications and redistributions must remain open-source**.
-* The code aims to be a clean, human-readable representation of the protocol, not just a decompiler dump.
-* Contributions that:
+This is the most finicky part. The lamp only listens for a bind command **within ~5 seconds after power-on**.
 
-  * clean up the encoder,
-  * add safer interfaces,
-  * or support more lamp models
-    are very welcome.
+### The binding dance
+
+1. **Turn the lamp OFF** at the wall switch (or unplug it). Wait 10 seconds.
+2. **Prepare to run the command** — have your terminal open in the `LampSmartOpen/` directory.
+3. **Turn the lamp ON** (plug it back in or flip the switch).
+4. **Immediately** run:
+   ```bash
+   ./fast-bind.sh
+   ```
+   You should see `✅ BIND SENT` within a fraction of a second.
+5. If the lamp **flashes or blinks**, it worked — the lamp is now paired to your UUID.
+
+### Troubleshooting binding
+
+| Problem | Fix |
+|---------|-----|
+| Nothing happens | Wait a full 10s with lamp OFF before powering on. The bind window is very short. |
+| `clr-adv` error | Harmless. The `add-adv` line is what matters — look for `Instance added: 1`. |
+| Lamp doesn't flash | The BLE adapter might not reach. Move the Linux machine closer, or use the relay mode below. |
+| `sudo` prompts | The scripts call `sudo btmgmt` internally. If you get password prompts, run `sudo -v` first. |
 
 ---
 
-## Safety & Legal
+## Step 7: Control Your Lamp
 
-* **Trademarks**: “LampSmart” / “LampSmart Pro” are likely trademarks of their respective owner. This project is not affiliated with or endorsed by them.
-* **Electrical safety**: You are ultimately controlling mains-powered lighting. Don’t use this to automate anything that could cause fire risk or other hazards.
+Once bound, control is instant:
+
+```bash
+./fast-lamp.sh on          # Turn on
+./fast-lamp.sh off         # Turn off
+./fast-lamp.sh dim 128 64  # Dim: 0-255 orange, 0-255 white
+```
+
+Each command sends a single BLE advertising burst and exits. No daemon, no background process, no pair-and-connect dance.
+
+---
+
+## Step 8: Bind More Lamps
+
+All your lamps share the same UUID from `.env`. To bind additional lamps:
+
+1. Leave `.env` as-is (same UUID)
+2. Power-cycle the NEXT lamp
+3. Run `./fast-bind.sh` within 5 seconds
+4. Verify with `./fast-lamp.sh on` → `./fast-lamp.sh off`
+
+Repeat for each lamp. After binding all of them, `./fast-lamp.sh on` turns **all lamps on simultaneously**.
+
+---
+
+## Step 9 (Optional): Network Relay for Distant Lamps
+
+If some lamps are out of BLE range, run a relay on a **Raspberry Pi** (or any Linux box) placed closer to the lamps.
+
+### Set up the relay
+
+1. SSH into the Pi: `ssh pi@pi3b.local`
+2. Run the one-shot setup:
+   ```bash
+   curl -sL https://raw.githubusercontent.com/azolkipli-personal/LampSmartOpen/main/pi-setup.sh | bash
+   ```
+3. Reboot: `sudo reboot`
+
+The Pi now runs `relay.py` as a systemd service, listening on port 8765.
+
+### Send commands via relay
+
+From your main Linux machine:
+```bash
+./send-relay.sh pi3b.local on
+./send-relay.sh pi3b.local off
+./send-relay.sh pi3b.local bind
+./send-relay.sh pi3b.local dim 128 64
+```
+
+The flow: your machine → HTTP POST → Pi → `btmgmt` BLE broadcast → lamps.
+
+---
+
+## How It Works
+
+The original LampSmart Pro Android app doesn't maintain a GATT connection. Instead, it broadcasts **BLE advertising packets** with encoded commands. The lamp listens passively and acts on matching packets.
+
+LampSmartOpen reconstructs this:
+
+1. `.env` stores your lamp UUID
+2. The shell scripts extract UUID fields, derive a **32-bit control address**, and pass it to `lampctrl`
+3. `lampctrl` (C binary, using the `opencodeV3` library) encodes the command into a BLE advertising payload
+4. `btmgmt add-adv` broadcasts that payload briefly
+5. The lamp receives it and executes the command (on/off/dim/bind)
+
+All in one burst with no persistent connection. That's why commands are instant, and why binding requires the 5-second power-cycle window — the lamp only watches for bind packets right after boot.
+
+---
+
+## Files in This Repo
+
+| File | Purpose |
+|------|---------|
+| `main.c` | C source for `lampctrl` — builds the BLE command payload |
+| `opencodeV3/` | Submodule — the V3 protocol encoder library |
+| `lampctrl.sh` | Upstream wrapper: computes address + fires command (~5s) |
+| `fast-bind.sh` | ⚡ Pre-computed bind — fires in ~0.15s |
+| `fast-lamp.sh` | ⚡ Pre-computed on/off/dim — instant |
+| `compute-packets.sh` | Regenerates pre-computed packets from `.env` |
+| `relay.py` | HTTP → BLE relay server (run on a Pi near lamps) |
+| `send-relay.sh` | Sends commands to a relay from your main machine |
+| `pi-setup.sh` | One-shot Pi configuration |
+| `ble-relay.service` | Systemd unit for auto-starting relay on boot |
+| `.env` | Your lamp UUID (JSON format) |
+| `LICENSE` | GPL-3.0 |
+
+---
+
+## 🔗 Upstream and Credits
+
+This is a fork of **[AuroraRAS/LampSmartOpen](https://github.com/AuroraRAS/LampSmartOpen)** (GPL-3.0).
+
+All credit for the **protocol reverse-engineering** and the core `lampctrl` C implementation goes to **AuroraRAS**. This project would not exist without their work.
+
+The `opencodeV3` submodule (also by AuroraRAS) implements the V3 LampSmart Pro encoding.
+
+### What this fork adds
+
+* **Speed**: Pre-computed packets reduce command latency from ~5s to ~0.15s
+* **Discovery**: Documented the QR code method for extracting UUID from the official app
+* **Relay mode**: HTTP-to-BLE relay for range extension via any Linux box
+* **Step-by-step guide**: Ground-up walkthrough tested on Fedora and Raspberry Pi OS
+* **Pi setup automation**: One-command deployment script + systemd service
 
 ---
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0**.
-See the [`LICENSE`](LICENSE) file for details.
+GNU General Public License v3.0. See [LICENSE](LICENSE).
 
 ---
 
-# LampSmartOpen
+# LampSmartOpen（日本語）
 
-LampSmartOpen は **LampSmart Pro** の制御ロジックをオープンソースで再実装したプロジェクトです。
-Linux マシンから `btmgmt` など標準的なツールだけで BLE ランプを制御でき、ベンダーの Android アプリやクラウドは不要です。
+LampSmartOpenは**LampSmart Pro**の制御ロジックをオープンソースで再実装したプロジェクトです。
+Linuxマシンから`btmgmt`などの標準ツールだけでBLEランプを制御でき、ベンダーのAndroidアプリやクラウドは不要です。
 
-> ⚠️ このプロジェクトは **実験的** で、BLE・Linux・リバースエンジニアリングに慣れている開発者／ハッカー向けです。利用は自己責任でお願いします。
-
----
-
-## 特長
-
-* **完全ローカル制御** — クラウドもアプリも不要
-* **LampSmart Pro（V3系）のプロトコル実装**
-* **小さくシンプルな C コア実装**（BLE Advertising Payload生成ツール）
-* **シェルラッパー `lampctrl.sh`**
-
-  * `.env` の UUID から制御アドレスを計算
-  * `btmgmt` を使って BLE Advertising を 1 回だけ送信
-* **読みやすく、変更しやすく、再現可能**
-
----
-
-## リポジトリ構成
-
-* `.env`
-  UUID などローカル設定（`jq` で読み取る）
-
-* `lampctrl.sh`
-  `lampctrl` バイナリと `btmgmt` を包むシェルスクリプト
-
-  * `.env` から UUID を抽出
-  * UUID の一部から制御アドレスを生成
-  * `lampctrl` を呼び出しペイロード生成
-  * `btmgmt` で Advertising を短時間送信
-
-* `main.c`
-  コマンドラインツール `lampctrl` の実装。
-  LampSmart V3 のペイロードを生成。
-
-* `CMakeLists.txt`
-  `lampctrl` のビルド設定。
-
-* `.gitmodules`
-  エンコーダ関係のサブモジュール。
-
-* `LICENSE`（GPL-3.0）
-
----
-
-## 仕組み（概要）
-
-LampSmart Pro アプリは、GATT 接続ではなく、特別な **BLE Advertising パケット** を連続送信する方式でランプを制御している。
-
-LampSmartOpen はその挙動を再現する。
-
-1. `.env` にランプの UUID を記述
-2. `lampctrl.sh` が:
-
-   * UUID の第2・第3フィールド（例: `27c7-500e`）を抽出
-   * 連結して 32bit 数値に変換し +1
-   * それを `lampctrl` に `-a` として渡す
-3. `lampctrl` が:
-
-   * LampSmart V3 コマンドを構築
-   * `btmgmt add-adv` 用の Advertising データを出力
-4. `btmgmt` が:
-
-   * LE をオンにし、広告データをセット
-   * 2 秒程度広告したあと停止
-
-Android アプリがしていることを透明かつシンプルに再現しているだけの構造。
-
----
-
-## 必要環境
-
-* **Linux**
-
-  * BLE 対応アダプタ（BlueZ サポート）
-  * `btmgmt`（BlueZ パッケージに含まれる）
-* ビルドツール
-
-  * `cmake`
-  * `gcc`（または対応する C コンパイラ）
-  * `make` または Ninja
-* コマンドラインツール
-
-  * `jq`（`.env` 読み取り用）
-
-必須ではないが、以下があると便利:
-
-* LampSmart Pro 対応ランプ
-* BLE Advertising の基礎知識
-
----
-
-## ビルド方法
-
-サブモジュール込みで clone。
+## クイックスタート
 
 ```bash
-git clone --recurse-submodules https://github.com/AuroraRAS/LampSmartOpen.git
+# 1. 依存関係インストール
+sudo apt install bluez bluez-tools cmake gcc make jq git
+
+# 2. ビルド
+git clone --recurse-submodules https://github.com/azolkipli-personal/LampSmartOpen.git
 cd LampSmartOpen
+cmake -S . -B build && cmake --build build
 
-cmake -S . -B build
-cmake --build build
+# 3. UUIDを.envに設定（アプリのQRコードから取得）
+echo '{"lu":"あなたのUUID"}' > .env
+
+# 4. パケット生成
+./compute-packets.sh
+
+# 5. ランプをバインド（電源ONから5秒以内）
+./fast-bind.sh
+
+# 6. 制御
+./fast-lamp.sh on
+./fast-lamp.sh off
+./fast-lamp.sh dim 128 64
 ```
 
-`lampctrl` は IDE によって以下のような場所に出力されることがある：
+## UUIDの取得方法
 
-* `build/lampctrl`
-* `build/Desktop-Debug/lampctrl`
+LampSmart Proアプリには`buildQrCode`機能があり、ランプ設定→共有からQRコードを表示できます。Google LensでスキャンしてUUIDを取得し、`.env`に設定してください。
 
-`lampctrl.sh` 内のパスを適宜調整すること。
+## 仕組み
 
----
+LampSmart ProアプリはGATT接続ではなく、**BLE Advertisingパケット**でコマンドを送信します。LampSmartOpenはこの動作を再現し、UUIDから制御アドレスを生成→`lampctrl`でペイロード生成→`btmgmt`でブロードキャスト、という流れでランプを制御します。
 
-## `.env` の設定
+## アップストリーム
 
-`.env` は JSON 形式で設定を書く。
-
-例:
-
-```json
-{
-  "lu": "89815eb1-27c7-500e-9d7f-d147a47ce477"
-}
-```
-
-スクリプトは:
-
-* 第2・第3フィールド (`27c7-500e`) を抽出
-* 16進数を連結 → `27c7500e`
-* 32bit として +1 → `0x27c7500f`
-* それを制御アドレスとして `lampctrl -a` に渡す
-
-複数ランプを扱う場合は `.env` を複数管理しても良い。現状は単一 UUID を想定。
-
----
-
-## 使い方
-
-### 1. Bluetooth の準備
-
-事前確認として:
-
-```bash
-sudo btmgmt --index 0 power on
-sudo btmgmt --index 0 le on
-```
-
-`lampctrl.sh` 自体もこれらを内部で行うが、動作確認のため手動で試す価値がある。
-
-### 2. シェルスクリプトから制御
-
-ビルド後、単純に:
-
-```bash
-./lampctrl.sh
-```
-
-デフォルト挙動:
-
-* `.env` から UUID を読み取り
-* 制御アドレス算出
-* 例として:
-
-```bash
-./build/Desktop-Debug/lampctrl -a 0x27c7500f -o 1
-```
-
-* `btmgmt add-adv` にペイロードを渡して広告
-* 数秒で広告停止
-
-`lampctrl.sh` を編集すれば:
-
-* Bluetooth アダプタ index (`IDX`)
-* 操作コード (`-o`)
-* 広告時間
-
-など自由に変更できる。
-
-### 3. `lampctrl` を直接使う
-
-```bash
-./build/lampctrl -a 0x27c7500f -o 1
-```
-
-サポートされるオプションは `main.c` に定義されている。
-基本は:
-
-* `-a <address>` — 制御アドレス
-* `-o <opcode>` — 操作コード（点灯/消灯/調光など）
-
-必要に応じて `--on`, `--off` など分かりやすいラッパーを追加できる。
-
----
-
-## 開発に関するメモ
-
-* GPL-3.0 のため、改変・再配布は同ライセンスで公開が必要
-* コードは「デコンパイル結果をそのまま並べたもの」ではなく、可読性を重視
-* エンコーダの整理や追加モデルの対応などのコントリビュートは歓迎
-
----
-
-## 安全性・法的注意
-
-* 「LampSmart」「LampSmart Pro」はそれぞれの権利者の商標であり、当プロジェクトは非公式
-* 制御対象は AC 電源に接続された照明器具であり、誤操作による危険に注意
-
----
+**[AuroraRAS/LampSmartOpen](https://github.com/AuroraRAS/LampSmartOpen)**（GPL-3.0）のフォークです。プロトコル解析とCコア実装の全ての功績はAuroraRASに帰属します。
 
 ## ライセンス
 
-本プロジェクトは **GNU GPL v3.0** で公開されています。
-詳細は `LICENSE` を参照してください。
-
+GNU General Public License v3.0
