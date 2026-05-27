@@ -50,7 +50,7 @@ git clone --recurse-submodules https://github.com/azolkipli-personal/LampSmartOp
 cd LampSmartOpen
 cmake -S . -B build && cmake --build build
 
-# 2. Set your lamp UUID
+# 2. Set your lamp UUID (see below for how to get it)
 echo '{"lu":"your-uuid-here"}' > .env
 
 # 3. Generate pre-computed packets
@@ -64,6 +64,22 @@ echo '{"lu":"your-uuid-here"}' > .env
 ./fast-lamp.sh off
 ./fast-lamp.sh dim 128 64
 ```
+
+### 🔑 Getting Your Lamp UUID — The QR Code Trick
+
+You don't need to decompile anything. The official LampSmart Pro app lets you **share the UUID via QR code**:
+
+1. Open the LampSmart Pro Android app
+2. Navigate to lamp settings → **Share / QR Code** (the app has `buildQrCode` for this)
+3. The app displays a QR code encoding the lamp's UUID
+4. Scan it with **Google Lens** or any QR scanner
+5. The decoded text contains the UUID — copy it into `.env` as the `lu` value
+
+The app's decompiled code confirms this: `buildQrCode`, `deviceId`, and QR sharing translations in multiple languages (Indonesian, Malay, Spanish, Chinese).
+
+Alternatively, if you already have the app paired:
+- Look in the app's internal storage at `/data/data/com.alllink.*/shared_prefs/` for stored UUIDs
+- Or use the `lu` field from a known-good `.env` shared between installations
 
 ---
 
