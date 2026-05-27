@@ -1,0 +1,14 @@
+[Unit]
+Description=BLE Proxy Relay for LampSmart Pro
+After=bluetooth.target network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/relay.py --port 8765
+Restart=always
+RestartSec=5
+User=pi
+WorkingDirectory=/home/pi
+
+[Install]
+WantedBy=multi-user.target

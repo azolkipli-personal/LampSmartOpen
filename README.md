@@ -1,9 +1,69 @@
 # LampSmartOpen
 
+> **This fork** adds fast pre-computed packet scripts, multi-lamp support, and a network relay mode for range extension via Raspberry Pi.
+
 LampSmartOpen is an open-source reimplementation of the **LampSmart Pro** control logic.
-It allows you to drive compatible BLE lamps directly from a Linux machine using standard tools like `btmgmt`, without the vendor’s Android app or cloud.
+It allows you to drive compatible BLE lamps directly from a Linux machine using standard tools like `btmgmt`, without the vendor's Android app or cloud.
 
 > ⚠️ This project is **experimental** and targeted at developers / hackers who are comfortable with BLE, Linux, and reverse-engineering. Use at your own risk.
+
+---
+
+## What This Fork Adds
+
+The upstream project provides the core protocol implementation. This fork adds convenience scripts and workflows born from real-world use with 4 lamps across multiple rooms.
+
+### ⚡ Fast Pre-Computed Packets
+
+`lampctrl.sh` computes the BLE advertising payload on every invocation — which works but takes ~5 seconds. That's too slow for binding (lamps only listen for ~5s after power-on).
+
+- **`fast-bind.sh`** — Fires a pre-computed bind packet in ~0.15s. Power-cycle your lamp, run this, done.
+- **`fast-lamp.sh`** — Instant on/off/dim with pre-computed packets. `./fast-lamp.sh on`, `./fast-lamp.sh off`, `./fast-lamp.sh dim 128 64`
+- **`compute-packets.sh`** — Regenerates pre-computed packets if the lamp UUID changes.
+
+### 🌐 Network Relay (Range Extension)
+
+If your BLE adapter can't reach all lamps, run a Raspberry Pi (or any Linux box) closer to them:
+
+- **`relay.py`** — Tiny HTTP server that receives BLE advertising payloads and broadcasts them via `btmgmt`
+- **`send-relay.sh`** — NUC-side sender: `./send-relay.sh pi3b.local on`
+- **`pi-setup.sh`** — One-shot Raspberry Pi configuration (SSH in, run it, reboot — done)
+- **`ble-relay.service`** — Systemd unit for auto-start on boot
+
+```text
+NUC ──HTTP POST──▶ Pi 3B ──btmgmt BLE──▶ 💡 Lamps
+```
+
+### 🔗 Upstream
+
+This is a fork of **[AuroraRAS/LampSmartOpen](https://github.com/AuroraRAS/LampSmartOpen)** (GPL-3.0).
+All credit for the protocol reverse-engineering and core `lampctrl` binary goes to AuroraRAS.
+The `opencodeV3` submodule implements the V3 protocol family.
+
+---
+
+## Quick Start (Fork Edition)
+
+```bash
+# 1. Build
+git clone --recurse-submodules https://github.com/azolkipli-personal/LampSmartOpen.git
+cd LampSmartOpen
+cmake -S . -B build && cmake --build build
+
+# 2. Set your lamp UUID
+echo '{"lu":"your-uuid-here"}' > .env
+
+# 3. Generate pre-computed packets
+./compute-packets.sh
+
+# 4. Bind a lamp (power-cycle it first!)
+./fast-bind.sh
+
+# 5. Control
+./fast-lamp.sh on
+./fast-lamp.sh off
+./fast-lamp.sh dim 128 64
+```
 
 ---
 
