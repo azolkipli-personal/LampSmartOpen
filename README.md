@@ -247,6 +247,10 @@ If you're writing your own scripts, always call `clr-adv` before and after `add-
 | `compute-packets.sh` | Regenerates pre-computed packets (for multi-lamp mode without `-l`) |
 | `fast-bind.sh` | Pre-computed bind (single-lamp mode) |
 | `fast-lamp.sh` | Pre-computed on/off/dim (single-lamp mode) |
+| `relay.py` | Optional: HTTP-to-BLE relay server for range extension (run on a Pi) |
+| `pi-setup.sh` | Optional: one-shot setup script for the relay Pi |
+| `ble-relay.service` | Optional: systemd unit for auto-starting the relay |
+| `send-relay.sh` | Optional: sends commands to a relay Pi instead of local btmgmt |
 
 ## License
 
