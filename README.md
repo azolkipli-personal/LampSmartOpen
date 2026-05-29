@@ -238,9 +238,47 @@ All in one burst with no persistent connection. That's why commands are instant,
 | `relay.py` | HTTP → BLE relay server (run on a Pi near lamps) |
 | `send-relay.sh` | Sends commands to a relay from your main machine |
 | `pi-setup.sh` | One-shot Pi configuration |
-| `ble-relay.service` | Systemd unit for auto-starting relay on boot |
-| `.env` | Your lamp UUID (JSON format) |
-| `LICENSE` | GPL-3.0 |
+|| `ble-relay.service` | Systemd unit for auto-starting relay on boot |
+|| `.env` | Your lamp UUID (JSON format) |
+|| `lamps/` | Per-lamp UUID files for multi-lamp setups: `lamps/{name}/.env` |
+|| `LICENSE` | GPL-3.0 |
+
+## Multi-Lamp Setup
+
+To control lamps individually (not all at once), use the `-l <name>` flag:
+
+```bash
+# Set up per-lamp UUIDs
+mkdir -p lamps/master lamps/living lamps/dining
+echo '{"lu":"YOUR-MASTER-UUID"}' > lamps/master/.env
+echo '{"lu":"YOUR-LIVING-UUID"}' > lamps/living/.env
+
+# Control individually
+./lampctrl.sh -l master -o 1    # master on
+./lampctrl.sh -l living -o 0    # living off
+./lampctrl.sh -l dining -o 1    # dining on
+
+# Backward compatible (no -l): reads root .env
+./lampctrl.sh -o 1              # all lamps on
+```
+
+### Google Home Integration
+
+Pair `lamp-web` (separate repo) with Homebridge for Google Home voice/app control:
+
+```bash
+git clone https://github.com/azolkipli-personal/lamp-web.git
+cd lamp-web
+python3 server.py
+```
+
+See the [lamp-web README](https://github.com/azolkipli-personal/lamp-web) for full Homebridge setup and Google Home account linking instructions.
+
+### Important: Stale BLE Advertisements
+
+The `lampctrl.sh` script automatically clears stale BLE advertisements before and after each command (`clr-adv`). This prevents a bug where a previous OFF advertisement keeps broadcasting and reverts any ON command from a physical remote within seconds.
+
+If you write your own control script, always call `clr-adv` before and after `add-adv`:
 
 ---
 
