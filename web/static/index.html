@@ -37,7 +37,7 @@
     flex-direction: column;
     gap: 10px;
   }
-  .card:has(.btn.on.active) { border-color: #1a73e8; background: #fff; }
+  .card.on { border-color: #1a73e8; background: #fff; }
   .header {
     display: flex;
     justify-content: space-between;
@@ -74,12 +74,24 @@
   .btn:active { background: #e8eaed; }
   .btn.on.active { background: #1a73e8; border-color: #1a73e8; color: #fff; }
   .btn.off.active { background: #5f6368; border-color: #5f6368; color: #fff; }
-  .dim-row {
+  .btn.night {
+    flex: 0 0 auto;
+    padding: 14px 12px;
+    font-size: 1.1rem;
+  }
+  .btn.night.active { background: #e8eaed; border-color: #9aa0a6; }
+  .slider-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
-  .dim-row input[type=range] {
+  .slider-label {
+    font-size: 0.75rem;
+    color: #5f6368;
+    white-space: nowrap;
+    min-width: fit-content;
+  }
+  .slider-row input[type=range] {
     flex: 1;
     height: 6px;
     -webkit-appearance: none;
@@ -89,35 +101,36 @@
     outline: none;
     min-width: 0;
   }
-  .dim-row input[type=range]::-webkit-slider-thumb {
+  .slider-row input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 28px; height: 28px;
+    width: 24px; height: 24px;
     border-radius: 50%;
     background: #1a73e8;
     cursor: pointer;
     border: 2px solid #fff;
     box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   }
-  .dim-row .dim-val {
+  .slider-val {
     font-size: 0.8125rem;
     color: #5f6368;
-    width: 32px;
+    width: 36px;
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  .dim-apply {
-    padding: 10px 16px;
+  .btn-set {
+    padding: 8px 14px;
     border: 1px solid #dadce0;
-    border-radius: 10px;
+    border-radius: 8px;
     background: #fff;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 500;
     color: #1a73e8;
     cursor: pointer;
-    min-height: 44px;
+    min-height: 36px;
+    white-space: nowrap;
     -webkit-tap-highlight-color: transparent;
   }
-  .dim-apply:active { background: #e8f0fe; }
+  .btn-set:active { background: #e8f0fe; }
   .toast {
     position: fixed;
     bottom: 24px;
@@ -156,6 +169,12 @@ function toast(msg) {
   t._tid = setTimeout(() => t.classList.remove('show'), 1500);
 }
 
+function showState(lamp, text, card) {
+  document.getElementById(`state-${lamp}`).textContent = text;
+  if (text === 'on ✓' || text === 'night ✓') card.classList.add('on');
+  else if (text === 'off ✓') card.classList.remove('on');
+}
+
 function build() {
   const grid = document.getElementById('grid');
   LAMPS.forEach(lamp => {
@@ -170,21 +189,30 @@ function build() {
       <div class="buttons">
         <button class="btn on" data-lamp="${lamp}" data-cmd="on">ON</button>
         <button class="btn off" data-lamp="${lamp}" data-cmd="off">OFF</button>
+        <button class="btn night" data-lamp="${lamp}" data-cmd="night">🌙</button>
       </div>
-      <div class="dim-row">
-        <input type="range" min="1" max="255" value="128" id="dim-${lamp}" aria-label="Brightness">
-        <span class="dim-val" id="dimval-${lamp}">50%</span>
-        <button class="dim-apply" data-lamp="${lamp}">Dim</button>
+      <div class="slider-row">
+        <span class="slider-label">Brightness</span>
+        <input type="range" id="bright-${lamp}" min="1" max="255" value="128">
+        <span class="slider-val" id="bval-${lamp}">50%</span>
+      </div>
+      <div class="slider-row">
+        <span style="font-size:0.85rem">❄️</span>
+        <input type="range" id="temp-${lamp}" min="0" max="255" value="128">
+        <span style="font-size:0.85rem">🔥</span>
+        <button class="btn-set" data-lamp="${lamp}">Set</button>
       </div>`;
     grid.appendChild(card);
 
-    const slider = card.querySelector('input[type=range]');
-    const label = card.querySelector('.dim-val');
-    slider.addEventListener('input', () => {
-      label.textContent = Math.round(slider.value / 255 * 100) + '%';
+    // Brightness slider live update
+    const bright = card.querySelector(`#bright-${lamp}`);
+    const bval = card.querySelector(`#bval-${lamp}`);
+    bright.addEventListener('input', () => {
+      bval.textContent = Math.round(bright.value / 255 * 100) + '%';
     });
   });
 
+  // ON / OFF / Night buttons
   document.querySelectorAll('.btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const lamp = btn.dataset.lamp;
@@ -192,22 +220,25 @@ function build() {
       const card = document.getElementById(`card-${lamp}`);
       card.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById(`state-${lamp}`).textContent = '...';
+      showState(lamp, '...', card);
       const res = await api(lamp, cmd);
-      document.getElementById(`state-${lamp}`).textContent = res.ok ? `${cmd} ✓` : 'failed';
+      showState(lamp, res.ok ? `${cmd} ✓` : 'failed', card);
       if (!res.ok) toast(`${lamp}: ${res.message}`);
     });
   });
 
-  document.querySelectorAll('.dim-apply').forEach(btn => {
+  // Set button — sends brightness + temperature
+  document.querySelectorAll('.btn-set').forEach(btn => {
     btn.addEventListener('click', async () => {
       const lamp = btn.dataset.lamp;
-      const val = document.getElementById(`dim-${lamp}`).value;
       const card = document.getElementById(`card-${lamp}`);
-      card.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
-      document.getElementById(`state-${lamp}`).textContent = '...';
-      const res = await api(lamp, 'dim', `?orange=${val}&white=${val}`);
-      document.getElementById(`state-${lamp}`).textContent = res.ok ? `dim ${Math.round(val/255*100)}% ✓` : 'failed';
+      const brightness = parseInt(document.getElementById(`bright-${lamp}`).value);
+      const temp = parseInt(document.getElementById(`temp-${lamp}`).value);
+      const orange = Math.round(brightness * (255 - temp) / 255);
+      const white = Math.round(brightness * temp / 255);
+      showState(lamp, '...', card);
+      const res = await api(lamp, 'dim', `?orange=${orange}&white=${white}`);
+      showState(lamp, res.ok ? `set ${Math.round(brightness/255*100)}% ✓` : 'failed', card);
       if (!res.ok) toast(`${lamp}: ${res.message}`);
     });
   });

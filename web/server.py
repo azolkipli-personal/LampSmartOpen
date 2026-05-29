@@ -25,6 +25,8 @@ def run_lamp(lamp: str, cmd: str, *args: str) -> tuple[bool, str]:
         cargs = ["-o", "0"]
     elif cmd == "dim":
         cargs = ["-d", f"{args[0]},{args[1]}"] if len(args) >= 2 else ["-d", "128,64"]
+    elif cmd == "night":
+        cargs = ["-n"]
     else:
         return False, f"Unknown command: {cmd}"
 
@@ -38,8 +40,10 @@ def run_lamp(lamp: str, cmd: str, *args: str) -> tuple[bool, str]:
         )
         output = (result.stdout + result.stderr).strip()
         if result.returncode == 0:
-            if cmd in ("on", "off"):
-                _lamp_state[lamp] = (cmd == "on")
+            if cmd in ("on", "night"):
+                _lamp_state[lamp] = True
+            elif cmd == "off":
+                _lamp_state[lamp] = False
             return True, output or f"{lamp} {cmd} OK"
         return False, output or f"Exit code {result.returncode}"
     except subprocess.TimeoutExpired:
@@ -52,7 +56,7 @@ def run_lamp(lamp: str, cmd: str, *args: str) -> tuple[bool, str]:
 async def lamp_command(lamp: str, cmd: str, orange: int = 128, white: int = 64):
     if lamp not in LAMPS:
         raise HTTPException(404, f"Unknown lamp: {lamp}")
-    if cmd not in ("on", "off", "dim"):
+    if cmd not in ("on", "off", "dim", "night"):
         raise HTTPException(400, f"Unknown command: {cmd}")
 
     if cmd == "dim":
