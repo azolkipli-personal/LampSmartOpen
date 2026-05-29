@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Lights</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #fff;
+    color: #202124;
+    min-height: 100dvh;
+    padding: 20px 12px 40px;
+  }
+  h1 {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #5f6368;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+  .card {
+    border: 1px solid #dadce0;
+    border-radius: 12px;
+    padding: 16px 14px 14px;
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .card:has(.btn.on.active) { border-color: #1a73e8; background: #fff; }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .name {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #202124;
+    text-transform: capitalize;
+  }
+  .state {
+    font-size: 0.75rem;
+    color: #80868b;
+  }
+  .buttons {
+    display: flex;
+    gap: 10px;
+  }
+  .btn {
+    flex: 1;
+    padding: 14px 0;
+    border: 1px solid #dadce0;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: #3c4043;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    min-height: 48px;
+  }
+  .btn:active { background: #e8eaed; }
+  .btn.on.active { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+  .btn.off.active { background: #5f6368; border-color: #5f6368; color: #fff; }
+  .dim-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dim-row input[type=range] {
+    flex: 1;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #dadce0;
+    border-radius: 3px;
+    outline: none;
+    min-width: 0;
+  }
+  .dim-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: #1a73e8;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .dim-row .dim-val {
+    font-size: 0.8125rem;
+    color: #5f6368;
+    width: 32px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .dim-apply {
+    padding: 10px 16px;
+    border: 1px solid #dadce0;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #1a73e8;
+    cursor: pointer;
+    min-height: 44px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dim-apply:active { background: #e8f0fe; }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #202124;
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-size: 0.875rem;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+    z-index: 10;
+    white-space: nowrap;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<h1>💡 Lights</h1>
+<div class="list" id="grid"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const LAMPS = ['master', 'living', 'dining', 'elias'];
+
+function api(lamp, cmd, params = '') {
+  return fetch(`/api/lamp/${lamp}/${cmd}${params}`).then(r => r.json());
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.classList.remove('show'), 1500);
+}
+
+function build() {
+  const grid = document.getElementById('grid');
+  LAMPS.forEach(lamp => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.id = `card-${lamp}`;
+    card.innerHTML = `
+      <div class="header">
+        <span class="name">${lamp}</span>
+        <span class="state" id="state-${lamp}"></span>
+      </div>
+      <div class="buttons">
+        <button class="btn on" data-lamp="${lamp}" data-cmd="on">ON</button>
+        <button class="btn off" data-lamp="${lamp}" data-cmd="off">OFF</button>
+      </div>
+      <div class="dim-row">
+        <input type="range" min="1" max="255" value="128" id="dim-${lamp}" aria-label="Brightness">
+        <span class="dim-val" id="dimval-${lamp}">50%</span>
+        <button class="dim-apply" data-lamp="${lamp}">Dim</button>
+      </div>`;
+    grid.appendChild(card);
+
+    const slider = card.querySelector('input[type=range]');
+    const label = card.querySelector('.dim-val');
+    slider.addEventListener('input', () => {
+      label.textContent = Math.round(slider.value / 255 * 100) + '%';
+    });
+  });
+
+  document.querySelectorAll('.btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const lamp = btn.dataset.lamp;
+      const cmd = btn.dataset.cmd;
+      const card = document.getElementById(`card-${lamp}`);
+      card.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(`state-${lamp}`).textContent = '...';
+      const res = await api(lamp, cmd);
+      document.getElementById(`state-${lamp}`).textContent = res.ok ? `${cmd} ✓` : 'failed';
+      if (!res.ok) toast(`${lamp}: ${res.message}`);
+    });
+  });
+
+  document.querySelectorAll('.dim-apply').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const lamp = btn.dataset.lamp;
+      const val = document.getElementById(`dim-${lamp}`).value;
+      const card = document.getElementById(`card-${lamp}`);
+      card.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(`state-${lamp}`).textContent = '...';
+      const res = await api(lamp, 'dim', `?orange=${val}&white=${val}`);
+      document.getElementById(`state-${lamp}`).textContent = res.ok ? `dim ${Math.round(val/255*100)}% ✓` : 'failed';
+      if (!res.ok) toast(`${lamp}: ${res.message}`);
+    });
+  });
+}
+
+build();
+</script>
+</body>
+</html>

@@ -1,354 +1,255 @@
 # LampSmartOpen
 
-<p align="center">
-  <a href="https://github.com/sponsors/azolkipli-personal">
-    <img src="https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA" alt="Sponsor azolkipli-personal" />
-  </a>
-</p>
+Control LampSmart Pro BLE lamps from Linux — no vendor app, no cloud, just `btmgmt`.
 
-> Control LampSmart Pro BLE lamps from Linux — no vendor app, no cloud, just `btmgmt`.
->
-> **This fork** adds instant pre-computed control scripts, the QR code UUID extraction method, and a network relay mode for range extension.
->
-> ⚠️ Experimental. Use at your own risk.
+⚠️ Experimental. Use at your own risk.
 
----
+## What This Repo Contains
 
-## Step 0: What You Need
+- **BLE layer** — `lampctrl.sh` + `lampctrl` C binary for sending BLE commands
+- **Per-lamp UUIDs** — `lamps/{name}/.env` for controlling each lamp individually
+- **Web UI** — `web/server.py` + frontend for browser control
+- **Google Home bridge** — Homebridge plugin config, see Google Home section below
 
-* A **Linux machine** with a BLE adapter (built-in or USB dongle)
-* One or more **LampSmart Pro** compatible lamps
-* An **Android phone** with the LampSmart Pro app installed (just once, to get the UUID)
-* **sudo** access on the Linux machine
+## Quick Start
 
----
-
-## Step 1: Install Dependencies
+### 1. Install Dependencies
 
 **Fedora:**
 ```bash
-sudo dnf install bluez bluez-tools cmake gcc make jq git
+sudo dnf install bluez bluez-tools cmake gcc make jq git python3 python3-pip
 ```
 
 **Debian / Ubuntu / Raspberry Pi OS:**
 ```bash
 sudo apt update
-sudo apt install bluez bluez-tools cmake gcc make jq git
+sudo apt install bluez bluez-tools cmake gcc make jq git python3 python3-pip
 ```
 
-**Verify your BLE adapter works:**
+**Python packages for the web UI:**
 ```bash
-sudo btmgmt info
-```
-You should see something like:
-```
-hci0:   Primary  Bus: USB
-        BD Address: XX:XX:XX:XX:XX:XX
-        settings: powered ssp br/edr le ...
+pip install fastapi uvicorn
 ```
 
----
-
-## Step 2: Clone and Build
+### 2. Clone & Build
 
 ```bash
-git clone --recurse-submodules https://github.com/azolkipli-personal/LampSmartOpen.git
+git clone https://github.com/azolkipli-personal/LampSmartOpen.git
 cd LampSmartOpen
 cmake -S . -B build
 cmake --build build
 ```
 
-This produces the `build/lampctrl` binary. Test it:
+Verify:
 ```bash
 ./build/lampctrl --help
+./lampctrl.sh --help    # should print usage
 ```
 
----
+### 3. Get Your Lamp UUIDs
 
-## Step 3: Get Your Lamp UUID
+You only need the official LampSmart Pro app **once** to extract per-lamp UUIDs.
 
-The LampSmart Pro app stores a per-lamp UUID. You need this to generate commands. **You only need the app once** — after extracting the UUID, you never need it again.
+1. Open the LampSmart Pro app on your Android phone
+2. Go to **lamp settings → Share** (the app has a `buildQrCode` feature)
+3. A QR code appears — scan it with Google Lens or any QR reader
+4. The decoded text is your lamp's UUID, looks like: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+5. Repeat for each lamp
 
-### Method A: QR Code (easiest)
+### 4. Set Up Per-Lamp UUIDs
 
-1. Open the **LampSmart Pro** app on your Android phone
-2. Make sure the lamp is paired in the app
-3. Navigate to **lamp settings → Share** (the app has a built-in `buildQrCode` feature)
-4. The app displays a **QR code** on screen
-5. Scan it with **Google Lens** or any QR code reader
-6. The decoded text contains your lamp's UUID — it looks like:
-   ```
-   XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-   ```
-7. Copy it. That's your `lu` value for the next step.
-
-> **Evidence**: The app's decompiled native code (`libapp.so`) contains `buildQrCode`, `deviceId`, and QR-sharing UI strings in Indonesian, Malay, Spanish, and Chinese — confirming this feature ships in the official app.
-
-### Method B: Already have a UUID?
-
-If a friend already set this up, or you extracted it previously, just re-use the UUID:
-```
-{"lu":"ac194b5e-0a95-50e5-a3f5-c9571988bff5"}
-```
-All your lamps bind to the same UUID — they're distinguished by the binding timing, not different UUIDs.
-
----
-
-## Step 4: Configure `.env`
-
-Create your `.env` file with the UUID from Step 3:
-```bash
-echo '{"lu":"YOUR-UUID-HERE"}' > .env
-```
-
-Example:
-```bash
-echo '{"lu":"ac194b5e-0a95-50e5-a3f5-c9571988bff5"}' > .env
-```
-
-**Verify:**
-```bash
-cat .env
-```
-Should show your UUID.
-
----
-
-## Step 5: Generate Pre-Computed Packets
-
-This fork uses pre-computed BLE advertising data for speed (0.15s vs ~5s). Generate them now:
+Create a `.env` file for each lamp inside `lamps/{name}/`:
 
 ```bash
-./compute-packets.sh
+mkdir -p lamps/master lamps/living lamps/dining
 ```
 
-This reads `.env`, derives the control address, and stores the packets inline in `fast-bind.sh` and `fast-lamp.sh`. If you change your UUID later, re-run this step.
-
----
-
-## Step 6: Bind Your Lamp
-
-This is the most finicky part. The lamp only listens for a bind command **within ~5 seconds after power-on**.
-
-### The binding dance
-
-1. **Turn the lamp OFF** at the wall switch (or unplug it). Wait 10 seconds.
-2. **Prepare to run the command** — have your terminal open in the `LampSmartOpen/` directory.
-3. **Turn the lamp ON** (plug it back in or flip the switch).
-4. **Immediately** run:
-   ```bash
-   ./fast-bind.sh
-   ```
-   You should see `✅ BIND SENT` within a fraction of a second.
-5. If the lamp **flashes or blinks**, it worked — the lamp is now paired to your UUID.
-
-### Troubleshooting binding
-
-| Problem | Fix |
-|---------|-----|
-| Nothing happens | Wait a full 10s with lamp OFF before powering on. The bind window is very short. |
-| `clr-adv` error | Harmless. The `add-adv` line is what matters — look for `Instance added: 1`. |
-| Lamp doesn't flash | The BLE adapter might not reach. Move the Linux machine closer, or use the relay mode below. |
-| `sudo` prompts | The scripts call `sudo btmgmt` internally. If you get password prompts, run `sudo -v` first. |
-
----
-
-## Step 7: Control Your Lamp
-
-Once bound, control is instant:
+Then create each `.env`:
 
 ```bash
-./fast-lamp.sh on          # Turn on
-./fast-lamp.sh off         # Turn off
-./fast-lamp.sh dim 128 64  # Dim: 0-255 orange, 0-255 white
+echo '{"lu":"your-master-uuid-here"}' > lamps/master/.env
+echo '{"lu":"your-living-uuid-here"}' > lamps/living/.env
+echo '{"lu":"your-dining-uuid-here"}' > lamps/dining/.env
 ```
 
-Each command sends a single BLE advertising burst and exits. No daemon, no background process, no pair-and-connect dance.
+Each UUID uniquely identifies one lamp — when you bind it later, the lamp permanently associates with that UUID.
 
----
+### 5. Bind Your Lamps
 
-## Step 8: Bind More Lamps
+Each lamp must be bound separately. The lamp only listens for bind commands **within ~5 seconds after power-on**.
 
-All your lamps share the same UUID from `.env`. To bind additional lamps:
+1. **Turn the lamp OFF** at the wall switch. Wait 10 seconds.
+2. Have your terminal ready in the `LampSmartOpen/` directory.
+3. **Turn the lamp ON** (flip the switch).
+4. **Immediately** run the bind command for that lamp:
 
-1. Leave `.env` as-is (same UUID)
-2. Power-cycle the NEXT lamp
-3. Run `./fast-bind.sh` within 5 seconds
-4. Verify with `./fast-lamp.sh on` → `./fast-lamp.sh off`
-
-Repeat for each lamp. After binding all of them, `./fast-lamp.sh on` turns **all lamps on simultaneously**.
-
----
-
-## Step 9 (Optional): Network Relay for Distant Lamps
-
-If some lamps are out of BLE range, run a relay on a **Raspberry Pi** (or any Linux box) placed closer to the lamps.
-
-### Set up the relay
-
-1. SSH into the Pi: `ssh pi@pi3b.local`
-2. Run the one-shot setup:
-   ```bash
-   curl -sL https://raw.githubusercontent.com/azolkipli-personal/LampSmartOpen/main/pi-setup.sh | bash
-   ```
-3. Reboot: `sudo reboot`
-
-The Pi now runs `relay.py` as a systemd service, listening on port 8765.
-
-### Send commands via relay
-
-From your main Linux machine:
 ```bash
-./send-relay.sh pi3b.local on
-./send-relay.sh pi3b.local off
-./send-relay.sh pi3b.local bind
-./send-relay.sh pi3b.local dim 128 64
+./lampctrl.sh -l master -b 1
 ```
 
-The flow: your machine → HTTP POST → Pi → `btmgmt` BLE broadcast → lamps.
+5. If the lamp **flashes or blinks**, it worked.
+6. Repeat for each lamp (`-l living -b 1`, `-l dining -b 1`).
 
----
+> **Tip:** The `-b 1` argument tells the lamp to bind to the UUID in that lamp's `.env` file. Each bind command must run within ~5 seconds of powering on that specific lamp.
 
-## How It Works
+### 6. Control Individual Lamps
 
-The original LampSmart Pro Android app doesn't maintain a GATT connection. Instead, it broadcasts **BLE advertising packets** with encoded commands. The lamp listens passively and acts on matching packets.
+```bash
+./lampctrl.sh -l master -o 1    # master ON
+./lampctrl.sh -l master -o 0    # master OFF
+./lampctrl.sh -l living -o 1    # living ON
+./lampctrl.sh -l dining -o 1    # dining ON
+./lampctrl.sh -l dining -d 128,64   # dining dim (orange=128, white=64)
+```
 
-LampSmartOpen reconstructs this:
+Without `-l`, it reads the root `.env` (controls all lamps bound to that UUID):
+```bash
+./lampctrl.sh -o 1   # all lamps ON
+./lampctrl.sh -o 0   # all lamps OFF
+```
 
-1. `.env` stores your lamp UUID
-2. The shell scripts extract UUID fields, derive a **32-bit control address**, and pass it to `lampctrl`
-3. `lampctrl` (C binary, using the `opencodeV3` library) encodes the command into a BLE advertising payload
-4. `btmgmt add-adv` broadcasts that payload briefly
-5. The lamp receives it and executes the command (on/off/dim/bind)
+## Web UI (Browser Control)
 
-All in one burst with no persistent connection. That's why commands are instant, and why binding requires the 5-second power-cycle window — the lamp only watches for bind packets right after boot.
+Start the web server:
 
----
+```bash
+python3 web/server.py
+```
+
+Open `http://localhost:8003` in your browser. Each lamp shows ON/OFF buttons and a dim slider.
+
+### Systemd Service (Auto-Start)
+
+Create `~/.config/systemd/user/lamp-web.service`:
+
+```ini
+[Unit]
+Description=LampSmart Pro Web Controller
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/azolkli/LampSmartOpen/web/server.py
+Restart=always
+RestartSec=5
+WorkingDirectory=/home/azolkli/LampSmartOpen/web
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+```
+
+Then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now lamp-web.service
+```
+
+## Google Home Integration
+
+Requires [Homebridge](https://homebridge.io) with two plugins:
+
+```bash
+npm install -g homebridge homebridge-http-switch homebridge-gsh
+```
+
+### Configure Homebridge Accessories
+
+Edit `~/.homebridge/config.json` and add one `HTTP-SWITCH` accessory per lamp:
+
+```json
+{
+  "accessories": [
+    {
+      "accessory": "HTTP-SWITCH",
+      "name": "Master Lamp",
+      "switchType": "stateful",
+      "statusPattern": "\"on\":true",
+      "onUrl": {"url": "http://localhost:8003/api/lamp/master/on", "method": "GET"},
+      "offUrl": {"url": "http://localhost:8003/api/lamp/master/off", "method": "GET"},
+      "statusUrl": {"url": "http://localhost:8003/api/lamp/master", "method": "GET"}
+    },
+    {
+      "accessory": "HTTP-SWITCH",
+      "name": "Living Lamp",
+      "switchType": "stateful",
+      "statusPattern": "\"on\":true",
+      "onUrl": {"url": "http://localhost:8003/api/lamp/living/on", "method": "GET"},
+      "offUrl": {"url": "http://localhost:8003/api/lamp/living/off", "method": "GET"},
+      "statusUrl": {"url": "http://localhost:8003/api/lamp/living", "method": "GET"}
+    },
+    {
+      "accessory": "HTTP-SWITCH",
+      "name": "Dining Lamp",
+      "switchType": "stateful",
+      "statusPattern": "\"on\":true",
+      "onUrl": {"url": "http://localhost:8003/api/lamp/dining/on", "method": "GET"},
+      "offUrl": {"url": "http://localhost:8003/api/lamp/dining/off", "method": "GET"},
+      "statusUrl": {"url": "http://localhost:8003/api/lamp/dining", "method": "GET"}
+    }
+  ],
+  "platforms": [
+    { "name": "GoogleSmartHome", "platform": "google-smarthome", "token": "your-gsh-token" }
+  ]
+}
+```
+
+**IMPORTANT: `statusPattern` must be `"on":true`.** The default pattern `/1/` looks for the character `1` in the response body and will **never** match `{"on": true}` (neither `true` nor `false` contains `1`). Without the correct pattern, Homebridge always reads OFF → Google Home fights the state → physical remote changes get reverted.
+
+### Link Google Home Account
+
+1. Open the Homebridge Config UI at `http://your-host:8581`
+2. Go to Plugins → Google Smart Home → Settings → **Link Account**
+3. Sign in with Google
+4. Restart Homebridge
+5. In the Google Home app: **Add → Works with Google → search "Homebridge"**
+
+### Troubleshooting: Lights Revert When Using Physical Remote
+
+If your lamp turns ON from the physical remote but then turns OFF after a few seconds, it's **stale BLE advertisements**.
+
+**What happens:** Each `lampctrl.sh` command adds a BLE advertising instance with `btmgmt add-adv`. If you don't clear it after the command, the instance keeps broadcasting the last command (OFF) every ~100ms. The lamp receives it and reverts.
+
+**The fix** is already in `lampctrl.sh` — `clr-adv` runs before and after each command:
+
+```bash
+sudo btmgmt --index 0 clr-adv      # clear any stale ads
+sudo btmgmt --index 0 add-adv ...   # send command
+sleep 0.1
+sudo btmgmt --index 0 clr-adv      # clean up after
+```
+
+If you're writing your own scripts, always call `clr-adv` before and after `add-adv`.
+
+## API Reference (Web UI)
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Web UI |
+| `GET /api/lamp/{name}/on` | Turn lamp on |
+| `GET /api/lamp/{name}/off` | Turn lamp off |
+| `GET /api/lamp/{name}/dim?orange=128&white=64` | Dim lamp |
+| `GET /api/lamp/{name}` | Get lamp state |
+| `GET /api/status` | Health check |
 
 ## Files in This Repo
 
 | File | Purpose |
 |------|---------|
-| `main.c` | C source for `lampctrl` — builds the BLE command payload |
+| `lampctrl.sh` | Main control script — `-l <name>` for per-lamp, `-o 1\|0` on/off, `-d O,W` dim, `-b N` bind |
+| `main.c` | C source for `lampctrl` binary — builds the BLE command payload |
 | `opencodeV3/` | Submodule — the V3 protocol encoder library |
-| `lampctrl.sh` | Upstream wrapper: computes address + fires command (~5s) |
-| `fast-bind.sh` | ⚡ Pre-computed bind — fires in ~0.15s |
-| `fast-lamp.sh` | ⚡ Pre-computed on/off/dim — instant |
-| `compute-packets.sh` | Regenerates pre-computed packets from `.env` |
-| `relay.py` | HTTP → BLE relay server (run on a Pi near lamps) |
-| `send-relay.sh` | Sends commands to a relay from your main machine |
-| `pi-setup.sh` | One-shot Pi configuration |
-|| `ble-relay.service` | Systemd unit for auto-starting relay on boot |
-|| `.env` | Your lamp UUID (JSON format) |
-|| `lamps/` | Per-lamp UUID files for multi-lamp setups: `lamps/{name}/.env` |
-|| `LICENSE` | GPL-3.0 |
-
-## Multi-Lamp Setup
-
-To control lamps individually (not all at once), use the `-l <name>` flag:
-
-```bash
-# Set up per-lamp UUIDs
-mkdir -p lamps/master lamps/living lamps/dining
-echo '{"lu":"YOUR-MASTER-UUID"}' > lamps/master/.env
-echo '{"lu":"YOUR-LIVING-UUID"}' > lamps/living/.env
-
-# Control individually
-./lampctrl.sh -l master -o 1    # master on
-./lampctrl.sh -l living -o 0    # living off
-./lampctrl.sh -l dining -o 1    # dining on
-
-# Backward compatible (no -l): reads root .env
-./lampctrl.sh -o 1              # all lamps on
-```
-
-### Google Home Integration
-
-Pair `lamp-web` (separate repo) with Homebridge for Google Home voice/app control:
-
-```bash
-git clone https://github.com/azolkipli-personal/lamp-web.git
-cd lamp-web
-python3 server.py
-```
-
-See the [lamp-web README](https://github.com/azolkipli-personal/lamp-web) for full Homebridge setup and Google Home account linking instructions.
-
-### Important: Stale BLE Advertisements
-
-The `lampctrl.sh` script automatically clears stale BLE advertisements before and after each command (`clr-adv`). This prevents a bug where a previous OFF advertisement keeps broadcasting and reverts any ON command from a physical remote within seconds.
-
-If you write your own control script, always call `clr-adv` before and after `add-adv`:
-
----
-
-## 🔗 Upstream and Credits
-
-This is a fork of **[AuroraRAS/LampSmartOpen](https://github.com/AuroraRAS/LampSmartOpen)** (GPL-3.0).
-
-All credit for the **protocol reverse-engineering** and the core `lampctrl` C implementation goes to **AuroraRAS**. This project would not exist without their work.
-
-The `opencodeV3` submodule (also by AuroraRAS) implements the V3 LampSmart Pro encoding.
-
-### What this fork adds
-
-* **Speed**: Pre-computed packets reduce command latency from ~5s to ~0.15s
-* **Discovery**: Documented the QR code method for extracting UUID from the official app
-* **Relay mode**: HTTP-to-BLE relay for range extension via any Linux box
-* **Step-by-step guide**: Ground-up walkthrough tested on Fedora and Raspberry Pi OS
-* **Pi setup automation**: One-command deployment script + systemd service
-
----
+| `build/lampctrl` | Compiled binary |
+| `lamps/{name}/.env` | Per-lamp UUID files — one per lamp |
+| `web/server.py` | FastAPI web server (port 8003) |
+| `web/static/index.html` | Web UI frontend |
+| `compute-packets.sh` | Regenerates pre-computed packets (for multi-lamp mode without `-l`) |
+| `fast-bind.sh` | Pre-computed bind (single-lamp mode) |
+| `fast-lamp.sh` | Pre-computed on/off/dim (single-lamp mode) |
 
 ## License
 
-GNU General Public License v3.0. See [LICENSE](LICENSE).
+GNU General Public License v3.0.
 
----
-
-# LampSmartOpen（日本語）
-
-LampSmartOpenは**LampSmart Pro**の制御ロジックをオープンソースで再実装したプロジェクトです。
-Linuxマシンから`btmgmt`などの標準ツールだけでBLEランプを制御でき、ベンダーのAndroidアプリやクラウドは不要です。
-
-## クイックスタート
-
-```bash
-# 1. 依存関係インストール
-sudo apt install bluez bluez-tools cmake gcc make jq git
-
-# 2. ビルド
-git clone --recurse-submodules https://github.com/azolkipli-personal/LampSmartOpen.git
-cd LampSmartOpen
-cmake -S . -B build && cmake --build build
-
-# 3. UUIDを.envに設定（アプリのQRコードから取得）
-echo '{"lu":"あなたのUUID"}' > .env
-
-# 4. パケット生成
-./compute-packets.sh
-
-# 5. ランプをバインド（電源ONから5秒以内）
-./fast-bind.sh
-
-# 6. 制御
-./fast-lamp.sh on
-./fast-lamp.sh off
-./fast-lamp.sh dim 128 64
-```
-
-## UUIDの取得方法
-
-LampSmart Proアプリには`buildQrCode`機能があり、ランプ設定→共有からQRコードを表示できます。Google LensでスキャンしてUUIDを取得し、`.env`に設定してください。
-
-## 仕組み
-
-LampSmart ProアプリはGATT接続ではなく、**BLE Advertisingパケット**でコマンドを送信します。LampSmartOpenはこの動作を再現し、UUIDから制御アドレスを生成→`lampctrl`でペイロード生成→`btmgmt`でブロードキャスト、という流れでランプを制御します。
-
-## アップストリーム
-
-**[AuroraRAS/LampSmartOpen](https://github.com/AuroraRAS/LampSmartOpen)**（GPL-3.0）のフォークです。プロトコル解析とCコア実装の全ての功績はAuroraRASに帰属します。
-
-## ライセンス
-
-GNU General Public License v3.0
+This is a fork of **[AuroraRAS/LampSmartOpen](https://github.com/AuroraRAS/LampSmartOpen)**. All credit for the protocol reverse-engineering and the core `lampctrl` C implementation goes to AuroraRAS.
