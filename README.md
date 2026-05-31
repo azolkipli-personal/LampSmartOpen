@@ -9,7 +9,7 @@ Control LampSmart Pro BLE lamps from Linux — no vendor app, no cloud, just `bt
 - **BLE layer** — `lampctrl.sh` + `lampctrl` C binary for sending BLE commands
 - **Per-lamp UUIDs** — `lamps/{name}/.env` for controlling each lamp individually
 - **Web UI** — `web/server.py` + frontend for browser control
-- **Google Home bridge** — Homebridge plugin config, see Google Home section below
+- **Google Home integration** — Home Assistant + MQTT bridge (free), no subscription needed
 
 ## Quick Start
 
@@ -146,66 +146,80 @@ systemctl --user daemon-reload
 systemctl --user enable --now lamp-web.service
 ```
 
-## Google Home Integration
+## Google Home Integration (Free — No Subscription)
 
-Requires [Homebridge](https://homebridge.io) with two plugins:
+Voice control via Google Home is now handled by **Home Assistant** + **Mosquitto MQTT** + **MQTT bridge**, completely free.
+
+### Architecture
+
+```
+Google Home app → Google HomeGraph API
+     ↕ (service account auth)
+Home Assistant (:8123)
+     ↕ (MQTT light entities)
+Mosquitto MQTT (:1883)
+     ↕ (lamp/{name}/set)
+ha/mqtt_bridge.py (systemd user service)
+     ↕ (HTTP GET)
+lamp-web FastAPI (:8003) → lampctrl.sh → btmgmt → 💡
+```
+
+### Components
+
+| Component | Setup |
+|-----------|-------|
+| **lamp-web** | `web/server.py` on port 8003 (systemd: `lamp-web.service`) |
+| **Home Assistant** | Docker, `ghcr.io/home-assistant/home-assistant:stable`, port 8123 |
+| **Mosquitto MQTT** | Docker, `eclipse-mosquitto:2`, port 1883, anonymous auth |
+| **MQTT Bridge** | `ha/mqtt_bridge.py` (systemd: `lamp-mqtt-bridge.service`) |
+
+### Setup Steps
+
+1. **HA + MQTT stack** — see `ha/` directory for config examples
+2. **Google Cloud Project** — create project, enable HomeGraph API, create service account with JSON key
+3. **HA config** — add `google_assistant:` section in `configuration.yaml` (see `ha/configuration.yaml.example`)
+4. **Google Home Developer Console** — create Cloud-to-Cloud integration, set OAuth URLs
+5. **Link Google Home** — Google Home app → + → Works with Google Home → link project
+
+### HA MQTT Light Config
+
+Each lamp is a MQTT light entity in HA with full brightness + color temperature support:
+
+```yaml
+mqtt:
+  light:
+    - name: "Master Lamp"
+      state_topic: "lamp/master/state"
+      command_topic: "lamp/master/set"
+      brightness_state_topic: "lamp/master/brightness"
+      brightness_command_topic: "lamp/master/brightness/set"
+      color_temp_state_topic: "lamp/master/color_temp"
+      color_temp_command_topic: "lamp/master/color_temp/set"
+      brightness_scale: 100
+      min_mireds: 50
+      max_mireds: 400
+```
+
+The MQTT bridge polls lamp-web every 3s and publishes state to retained MQTT topics.
+
+### Google Home Voice Commands
+
+Once linked, you can say:
+- *"Hey Google, turn on/off master lamp"*
+- *"Hey Google, set living lamp to 50%"*
+- *"Hey Google, make dining lamp warmer/cooler"*
+
+### Exposing HA Externally (Required for OAuth Linking)
+
+HA must be accessible via HTTPS for the Google Home OAuth linking flow. Free option: **Tailscale Funnel**.
 
 ```bash
-npm install -g homebridge homebridge-http-switch homebridge-gsh
+sudo tailscale funnel --bg 8123
 ```
 
-### Configure Homebridge Accessories
+→ HA available at `https://<hostname>.tail<XXXXX>.ts.net` (permanent, HTTPS, free).
 
-Edit `~/.homebridge/config.json` and add one `HTTP-SWITCH` accessory per lamp:
-
-```json
-{
-  "accessories": [
-    {
-      "accessory": "HTTP-SWITCH",
-      "name": "Master Lamp",
-      "switchType": "stateful",
-      "statusPattern": "\"on\":true",
-      "onUrl": {"url": "http://localhost:8003/api/lamp/master/on", "method": "GET"},
-      "offUrl": {"url": "http://localhost:8003/api/lamp/master/off", "method": "GET"},
-      "statusUrl": {"url": "http://localhost:8003/api/lamp/master", "method": "GET"}
-    },
-    {
-      "accessory": "HTTP-SWITCH",
-      "name": "Living Lamp",
-      "switchType": "stateful",
-      "statusPattern": "\"on\":true",
-      "onUrl": {"url": "http://localhost:8003/api/lamp/living/on", "method": "GET"},
-      "offUrl": {"url": "http://localhost:8003/api/lamp/living/off", "method": "GET"},
-      "statusUrl": {"url": "http://localhost:8003/api/lamp/living", "method": "GET"}
-    },
-    {
-      "accessory": "HTTP-SWITCH",
-      "name": "Dining Lamp",
-      "switchType": "stateful",
-      "statusPattern": "\"on\":true",
-      "onUrl": {"url": "http://localhost:8003/api/lamp/dining/on", "method": "GET"},
-      "offUrl": {"url": "http://localhost:8003/api/lamp/dining/off", "method": "GET"},
-      "statusUrl": {"url": "http://localhost:8003/api/lamp/dining", "method": "GET"}
-    }
-  ],
-  "platforms": [
-    { "name": "GoogleSmartHome", "platform": "google-smarthome", "token": "your-gsh-token" }
-  ]
-}
-```
-
-**IMPORTANT: `statusPattern` must be `"on":true`.** The default pattern `/1/` looks for the character `1` in the response body and will **never** match `{"on": true}` (neither `true` nor `false` contains `1`). Without the correct pattern, Homebridge always reads OFF → Google Home fights the state → physical remote changes get reverted.
-
-### Link Google Home Account
-
-1. Open the Homebridge Config UI at `http://your-host:8581`
-2. Go to Plugins → Google Smart Home → Settings → **Link Account**
-3. Sign in with Google
-4. Restart Homebridge
-5. In the Google Home app: **Add → Works with Google → search "Homebridge"**
-
-### Troubleshooting: Lights Revert When Using Physical Remote
+### Troubleshooting
 
 If your lamp turns ON from the physical remote but then turns OFF after a few seconds, it's **stale BLE advertisements**.
 
@@ -225,12 +239,15 @@ If you're writing your own scripts, always call `clr-adv` before and after `add-
 ## API Reference (Web UI)
 
 | Endpoint | Description |
-|----------|-------------|
+|---------|-------------|
 | `GET /` | Web UI |
 | `GET /api/lamp/{name}/on` | Turn lamp on |
 | `GET /api/lamp/{name}/off` | Turn lamp off |
-| `GET /api/lamp/{name}/dim?orange=128&white=64` | Dim lamp |
-| `GET /api/lamp/{name}` | Get lamp state |
+| `GET /api/lamp/{name}/dim?orange=128&white=64` | Dim lamp (direct channel control) |
+| `GET /api/lamp/{name}/brightness?value=N` | Set brightness 0-100% (HTTP-LIGHTBULB) |
+| `GET /api/lamp/{name}/temperature?value=N` | Set color temp 50-400 mired (HTTP-LIGHTBULB) |
+| `GET /api/lamp/{name}/status` | Full lamp state `{on, brightness, colorTemp}` |
+| `GET /api/lamp/{name}` | Basic lamp state (backward compat) |
 | `GET /api/status` | Health check |
 
 ## Files in This Repo
@@ -244,6 +261,8 @@ If you're writing your own scripts, always call `clr-adv` before and after `add-
 | `lamps/{name}/.env` | Per-lamp UUID files — one per lamp |
 | `web/server.py` | FastAPI web server (port 8003) |
 | `web/static/index.html` | Web UI frontend |
+| `ha/mqtt_bridge.py` | MQTT → lamp-web HTTP bridge for Home Assistant |
+| `ha/configuration.yaml.example` | Home Assistant config example |
 | `compute-packets.sh` | Regenerates pre-computed packets (for multi-lamp mode without `-l`) |
 | `fast-bind.sh` | Pre-computed bind (single-lamp mode) |
 | `fast-lamp.sh` | Pre-computed on/off/dim (single-lamp mode) |

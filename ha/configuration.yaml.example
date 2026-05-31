@@ -1,0 +1,69 @@
+# Home Assistant configuration for LampSmart Pro
+# Copy this to your HA config directory and rename to configuration.yaml
+default_config:
+
+http:
+  server_host: 0.0.0.0
+  server_port: 8123
+  # Required if using Tailscale Funnel or reverse proxy
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 127.0.0.1
+    - ::1
+
+mqtt:
+  light:
+    - name: "Master Lamp"
+      unique_id: "lamp_master"
+      state_topic: "lamp/master/state"
+      command_topic: "lamp/master/set"
+      brightness_state_topic: "lamp/master/brightness"
+      brightness_command_topic: "lamp/master/brightness/set"
+      color_temp_state_topic: "lamp/master/color_temp"
+      color_temp_command_topic: "lamp/master/color_temp/set"
+      payload_on: "ON"
+      payload_off: "OFF"
+      brightness_scale: 100
+      min_mireds: 50
+      max_mireds: 400
+      retain: true
+
+    - name: "Living Lamp"
+      unique_id: "lamp_living"
+      state_topic: "lamp/living/state"
+      command_topic: "lamp/living/set"
+      brightness_state_topic: "lamp/living/brightness"
+      brightness_command_topic: "lamp/living/brightness/set"
+      color_temp_state_topic: "lamp/living/color_temp"
+      color_temp_command_topic: "lamp/living/color_temp/set"
+      payload_on: "ON"
+      payload_off: "OFF"
+      brightness_scale: 100
+      min_mireds: 50
+      max_mireds: 400
+      retain: true
+
+    - name: "Dining Lamp"
+      unique_id: "lamp_dining"
+      state_topic: "lamp/dining/state"
+      command_topic: "lamp/dining/set"
+      brightness_state_topic: "lamp/dining/brightness"
+      brightness_command_topic: "lamp/dining/brightness/set"
+      color_temp_state_topic: "lamp/dining/color_temp"
+      color_temp_command_topic: "lamp/dining/color_temp/set"
+      payload_on: "ON"
+      payload_off: "OFF"
+      brightness_scale: 100
+      min_mireds: 50
+      max_mireds: 400
+      retain: true
+
+# Google Assistant integration (free, using service account + HomeGraph API)
+# See README for Google Home Developer Console setup steps
+google_assistant:
+  project_id: "YOUR_GCP_PROJECT_ID"
+  service_account: !include google_assistant.json
+  report_state: true
+  expose_by_default: true
+  exposed_domains:
+    - light
